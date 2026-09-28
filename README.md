@@ -60,5 +60,12 @@ must resolve to the host, and inbound ports 80 and 443 must be reachable for
 certificate issuance and HTTPS traffic. `CERTBOT_EMAIL` is optional; when
 omitted, Certbot registers without an email address. `PORT` sets both the local
 Runtime HTTP port and Apache's h2c upstream port. When provisioning an existing
-host again, the script updates these endpoint values while preserving other
-private settings and credentials.
+host again, the script inspects the existing resources, repairs missing or
+outdated managed configuration, updates only these endpoint values, and
+preserves application secrets, Telegram settings, database contents, and TDLib
+data. It reuses a valid Certbot certificate and keeps the PDE proxy include to
+one entry. PDE configuration files at managed paths must carry this script's
+marker or match its known legacy format; Certbot virtual hosts are recognized
+through their domain-specific renewal configuration. Conflicting files and
+unmarked PostgreSQL objects without `app.env` stop provisioning with a
+diagnostic instead of being overwritten.
