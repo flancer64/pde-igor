@@ -198,7 +198,7 @@ jobs:
 
             if (cd "$CURRENT" \
               && export NVM_DIR \
-              && . "$NVM_DIR/nvm.sh" \
+              && . "$NVM_DIR/nvm.sh" --no-use \
               && echo "NVM loaded" \
               && { nvm use || nvm install; } \
               && command -v npm \
