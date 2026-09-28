@@ -18,6 +18,7 @@ existing_install=true
 certificate_valid=true
 test_owner="$(id -un)"
 test_group="$(id -gn)"
+original_env_file="${fixture_dir}/app.env"
 
 # Fixtures are unprivileged files; production preflight still checks root ownership.
 assert_root_owned_regular_file() {
@@ -25,8 +26,26 @@ assert_root_owned_regular_file() {
 }
 
 read_env_value() {
-    [ "$1" = TEQFW_WEB__PORT ] || return 1
-    printf '4028\n'
+    awk -v key="$1" '
+        index($0, key "=") == 1 { count++; value = substr($0, length(key) + 2) }
+        END { if (count != 1) exit 1; print value }
+    ' "$original_env_file"
+}
+
+inspect_postgres() {
+    pg_role_exists=true
+    pg_database_exists=true
+    pg_role_can_login=true
+    pg_role_marked=false
+    pg_database_marked=false
+    pg_role_comment_null=true
+    pg_database_comment_null=true
+    pg_database_owner="$DB_USER"
+}
+
+psql() {
+    [ "${PGPASSWORD:-}" = "$(read_env_value TEQFW_DB__PASSWORD)" ] || return 1
+    printf '%s\n' "$DB_USER"
 }
 
 original_heredoc() {
@@ -40,6 +59,15 @@ original_heredoc() {
     ' "${fixture_dir}/original.sh"
     printf 'EOF\n'
 }
+
+database_password='existing-database-password'
+owner_secret='existing-owner-secret'
+eval "$(original_heredoc create_environment_file 'cat > "$ENV_FILE" <<EOF')" > "$original_env_file"
+grep -Fqx '# Managed by scripts/create-user.sh. Keep this file private.' "$original_env_file"
+[ "$(read_env_value TEQFW_WEB__PORT)" = 4028 ]
+inspect_postgres_state
+[ "$pg_reset_password" = false ]
+[ "$pg_fix_database_owner" = false ]
 
 check_migration() {
     local fixture="$1" legacy_renderer="$2" managed_renderer="$3" mode="$4"
