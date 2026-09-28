@@ -145,7 +145,9 @@ jobs:
             PREVIOUS=""
 
             if [ -L "$CURRENT" ]; then
-              PREVIOUS="$(readlink -f "$CURRENT")"
+              if /bin/systemctl is-active --quiet "$SERVICE"; then
+                PREVIOUS="$(readlink -f "$CURRENT")"
+              fi
 
             elif [ -d "$CURRENT" ]; then
               if [ -n "$(find "$CURRENT" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
@@ -180,7 +182,18 @@ jobs:
             . "$ENV_FILE"
             set +a
 
-            if (cd "$CURRENT" && npm exec -- teq db:migrate) \
+            NVM_DIR="$HOME_DIR/.nvm"
+
+            if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+              echo "NVM installation not found: $NVM_DIR/nvm.sh"
+              exit 1
+            fi
+
+            if (cd "$CURRENT" \
+              && export NVM_DIR \
+              && . "$NVM_DIR/nvm.sh" \
+              && { nvm use --silent || nvm install; } \
+              && npm exec -- teq db:migrate) \
               && sudo /bin/systemctl start "$SERVICE" \
               && /bin/systemctl is-active --quiet "$SERVICE"; then
 
@@ -208,6 +221,7 @@ jobs:
 
               echo "Rollback completed."
             else
+              rm -f "$CURRENT"
               echo "No previous release available for rollback."
             fi
 

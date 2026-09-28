@@ -314,24 +314,55 @@ EOF
     fi
     echo '</VirtualHost>'
 }
+valid_http_site() {
+    local error_log="\${APACHE_LOG_DIR}/$APP_USER.error.log"
+    local access_log="\${APACHE_LOG_DIR}/$APP_USER.access.log"
+    awk -v domain="$DOMAIN" -v error_log="$error_log" -v access_log="$access_log" '
+        {
+            sub(/^[[:space:]]+/, "")
+            sub(/[[:space:]]+$/, "")
+            if ($0 == "" || $1 ~ /^#/) next
+            if ($1 == "<VirtualHost") {
+                if (opened || closed || NF != 2 || $2 != "*:80>") exit 1
+                opened = 1
+            } else if ($1 == "</VirtualHost>") {
+                if (!opened || closed || NF != 1) exit 1
+                closed = 1
+            } else if (!opened || closed) {
+                exit 1
+            } else if ($1 == "ServerName") {
+                if (++server != 1 || NF != 2 || $2 != domain) exit 1
+            } else if ($1 == "ErrorLog") {
+                if (++error != 1 || NF != 2 || $2 != error_log) exit 1
+            } else if ($1 == "CustomLog") {
+                if (++access != 1 || NF != 3 || $2 != access_log || $3 != "combined") exit 1
+            } else if ($1 == "RewriteEngine") {
+                if (redirect != 0 || NF != 2 || $2 != "on") exit 1
+                redirect = 1
+            } else if ($1 == "RewriteCond") {
+                if (redirect != 1 || NF != 3 || $2 != "%{SERVER_NAME}" || $3 != "=" domain) exit 1
+                redirect = 2
+            } else if ($1 == "RewriteRule") {
+                if (redirect != 2 || NF != 4 || $2 != "^" ||
+                    $3 != "https://%{SERVER_NAME}%{REQUEST_URI}" || $4 != "[END,NE,R=permanent]") exit 1
+                redirect = 3
+            } else {
+                exit 1
+            }
+        }
+        END {
+            if (!opened || !closed || server != 1 || error != 1 || access != 1 ||
+                (redirect != 0 && redirect != 3)) exit 1
+        }
+    ' "$HTTP_SITE"
+}
 ensure_http_site() {
-    local redirect=$1 existing_redirect=false
-    new_temp
-    render_http_site false > "$TEMP_FILE"
+    local redirect=$1
     if exists "$HTTP_SITE"; then
         [ -f "$HTTP_SITE" ] && [ ! -L "$HTTP_SITE" ] || fail "Invalid HTTP site: $HTTP_SITE"
         [ "$(stat -c %u "$HTTP_SITE")" = 0 ] || fail "HTTP site is not root-owned: $HTTP_SITE"
-        if ! cmp -s "$TEMP_FILE" "$HTTP_SITE" && ! tail -n +2 "$TEMP_FILE" | cmp -s - "$HTTP_SITE"; then
-            new_temp
-            render_http_site true > "$TEMP_FILE"
-            if cmp -s "$TEMP_FILE" "$HTTP_SITE" || tail -n +2 "$TEMP_FILE" | cmp -s - "$HTTP_SITE"; then
-                existing_redirect=true
-            else
-                fail "Existing HTTP site differs from expected PDE configuration: $HTTP_SITE"
-            fi
-        fi
-        [ "$(stat -c %a "$HTTP_SITE")" = 644 ] || chmod 0644 "$HTTP_SITE"
-        [ "$redirect" = true ] && [ "$existing_redirect" = false ] || return 0
+        valid_http_site || fail "Existing HTTP site has unexpected directives: $HTTP_SITE"
+        return
     fi
     new_temp
     render_http_site "$redirect" > "$TEMP_FILE"
