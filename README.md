@@ -45,8 +45,9 @@ sudo BASE_URL=https://pde.example.org PORT=3000 ./scripts/create-user.sh
 
 It creates the `pde-igor` service account, isolated PostgreSQL role and
 database, protected state directories, private runtime configuration, NVM,
-systemd unit, deployment sudoers rule, and log rotation. It does not deploy a
-release or configure Telegram credentials; add the latter to
+systemd unit, deployment sudoers rule, and log rotation. It installs missing
+host packages, including PostgreSQL, sudo, Apache, and Certbot. It does not
+deploy a release or configure Telegram credentials; add the latter to
 `/home/pde-igor/private/pde/app.env` after provisioning.
 
 The script installs Apache and Certbot, creates an HTTP virtual host, and runs
@@ -59,13 +60,8 @@ Set `BASE_URL` to the public HTTPS origin without a port or path. Its DNS name
 must resolve to the host, and inbound ports 80 and 443 must be reachable for
 certificate issuance and HTTPS traffic. `CERTBOT_EMAIL` is optional; when
 omitted, Certbot registers without an email address. `PORT` sets both the local
-Runtime HTTP port and Apache's h2c upstream port. When provisioning an existing
-host again, the script inspects the existing resources, repairs missing or
-outdated managed configuration, updates only these endpoint values, and
-preserves application secrets, Telegram settings, database contents, and TDLib
-data. It reuses a valid Certbot certificate and keeps the PDE proxy include to
-one entry. PDE configuration files at managed paths must carry this script's
-marker or match its known legacy format; Certbot virtual hosts are recognized
-through their domain-specific renewal configuration. Conflicting files and
-unmarked PostgreSQL objects without `app.env` stop provisioning with a
-diagnostic instead of being overwritten.
+Runtime HTTP port and Apache's h2c upstream port. Rerunning provisioning
+keeps existing secrets and application data. It creates missing host resources
+and rejects conflicting files or database credentials. Once provisioning ends,
+run the GitHub Actions deployment workflow; it activates the release, runs
+migrations, starts the service, checks its health, and handles rollback.
