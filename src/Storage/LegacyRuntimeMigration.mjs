@@ -95,6 +95,20 @@ async function hasTable(connection, name) {
     return connection.getSchemaBuilder().hasTable(name);
 }
 
+/** @param {any} connection @returns {Promise<boolean>} */
+async function isEmptyDatabase(connection) {
+    const adapter = await connection.getDialectAdapter().describe();
+    if (adapter.id !== 'postgresql') return false;
+    const result = await connection.getClient().raw(`
+        SELECT NOT EXISTS (
+            SELECT 1 FROM pg_class AS object
+            JOIN pg_namespace AS schema ON schema.oid = object.relnamespace
+            WHERE schema.nspname = 'public' AND object.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+        ) AS empty
+    `);
+    return result.rows?.[0]?.empty === true;
+}
+
 /** @param {readonly string[]} names @returns {readonly string[]} */
 function cleanupOrder(names) {
     /** @param {string} name @returns {number} */
@@ -311,8 +325,8 @@ async function completeHistory({history, compilation, connection}) {
 }
 
 export default class LegacyRuntimeMigration {
-    /** @param {object} deps @param {TeqFw_Db_Back_Config} deps.config @param {TeqFw_Db_Back_RDb_Connect} deps.connection @param {TeqFw_Db_Back_RDb_Connect} deps.connectionFactory @param {TeqFw_Db_Back_Dem_Compile} deps.compile @param {TeqFw_Db_Back_RDb_Rebuild} deps.rebuild @param {TeqFw_Db_Back_RDb_History} deps.history @param {Pde_Runtime_Storage_Schema} deps.schemaProvider */
-    constructor({config, connection, connectionFactory, compile, rebuild, history, schemaProvider}) {
+    /** @param {object} deps @param {TeqFw_Db_Back_Config} deps.config @param {TeqFw_Db_Back_RDb_Connect} deps.connection @param {TeqFw_Db_Back_RDb_Connect} deps.connectionFactory @param {TeqFw_Db_Back_Dem_Compile} deps.compile @param {TeqFw_Db_Back_RDb_Rebuild} deps.rebuild @param {TeqFw_Db_Back_RDb_History} deps.history @param {TeqFw_Db_Back_RDb_Schema} deps.schema @param {Pde_Runtime_Storage_Schema} deps.schemaProvider */
+    constructor({config, connection, connectionFactory, compile, rebuild, history, schema, schemaProvider}) {
         /** @returns {Promise<object>} */
         this.execute = async function () {
             const startedConnection = !connection.getClient();
@@ -329,6 +343,12 @@ export default class LegacyRuntimeMigration {
                     const sourceNames = target.physical.tables.map(({name}) => `${SOURCE_NAMESPACE}_${name}`);
                     const backups = await dropSourceBackups(connection, sourceNames);
                     return Object.freeze({...historyResult, backups});
+                }
+                if (await isEmptyDatabase(connection)) {
+                    schema.setCompilation({compilation: target});
+                    await schema.createAllTables({conn: connection});
+                    const historyResult = await completeHistory({history, compilation: target, connection});
+                    return Object.freeze({...historyResult, backups: []});
                 }
 
                 const sourceMap = {version: 2, namespace: SOURCE_NAMESPACE, ref: {}, deprecated: {}};
@@ -382,5 +402,5 @@ export default class LegacyRuntimeMigration {
 
 export const __deps__ = Object.freeze({default: Object.freeze({
     config: 'TeqFw_Db_Back_Config$', connection: 'TeqFw_Db_Back_RDb_Connect$', connectionFactory: 'TeqFw_Db_Back_RDb_Connect$$', compile: 'TeqFw_Db_Back_Dem_Compile$',
-    rebuild: 'TeqFw_Db_Back_RDb_Rebuild$', history: 'TeqFw_Db_Back_RDb_History$', schemaProvider: 'Pde_Runtime_Storage_Schema$',
+    rebuild: 'TeqFw_Db_Back_RDb_Rebuild$', history: 'TeqFw_Db_Back_RDb_History$', schema: 'TeqFw_Db_Back_RDb_Schema$', schemaProvider: 'Pde_Runtime_Storage_Schema$',
 })});
