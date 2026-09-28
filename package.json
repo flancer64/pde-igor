@@ -1,0 +1,55 @@
+{
+  "name": "@flancer32/pde-igor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal Digital Embassy for Igor Gusev.",
+  "type": "module",
+  "files": [
+    ".env.example",
+    "bootstrap",
+    "etc",
+    "README.md",
+    "src"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "teqfw": {
+    "fw": {
+      "di": {
+        "namespaces": [
+          {
+            "prefix": "Pde_Igor_",
+            "path": "./src",
+            "ext": ".mjs"
+          }
+        ]
+      },
+      "cli": {
+        "container": {
+          "configurator": "./bootstrap/di-config.mjs"
+        },
+        "command": {
+          "default": "web:start"
+        },
+        "plugin": "Pde_Igor_Cli_Plugin$"
+      }
+    }
+  },
+  "scripts": {
+    "db:migrate": "teq db:migrate",
+    "start": "teq web:start"
+  },
+  "dependencies": {
+    "@flancer32/pde-desk-echo": "github:flancer32/pde-desk-echo#main",
+    "@flancer32/pde-desk-telegram": "github:flancer32/pde-desk-telegram#main",
+    "@flancer32/pde-runtime": "github:flancer32/pde-runtime#main",
+    "@flancer32/pde-sdk": "github:flancer32/pde-sdk#main",
+    "@teqfw/cli": "^2.2.0",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "typescript": "^5.9.0"
+  }
+}

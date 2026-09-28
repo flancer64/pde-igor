@@ -1,0 +1,214 @@
+name: LIVE - Build & Deploy PDE Igor
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-pde-igor
+  cancel-in-progress: false
+
+env:
+  PRJ: pde-igor
+  HOME_DIR: ${{ vars.HOME_DIR }}
+  SERVICE: ${{ vars.SERVICE }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Install production dependencies
+        env:
+          GH_PAT: ${{ secrets.PDE_PACKAGES_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          AUTH="$(printf 'x-access-token:%s' "$GH_PAT" | base64 -w0)"
+          echo "::add-mask::$AUTH"
+
+          GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH" \
+          npm install \
+            --install-links \
+            --omit=dev \
+            --no-audit \
+            --no-fund
+
+      - name: Build deployment archive
+        run: |
+          set -euo pipefail
+
+          zip -qq -r "$RUNNER_TEMP/${PRJ}.zip" . \
+            -x \
+              '.git/*' \
+              '.github/*' \
+              '.env' \
+              'var/*'
+
+      - name: Upload deployment archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-archive
+          path: ${{ runner.temp }}/${{ env.PRJ }}.zip
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download deployment archive
+        uses: actions/download-artifact@v8
+        with:
+          name: app-archive
+          path: .
+
+      - name: Copy deployment archive
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ vars.HOST }}
+          username: ${{ vars.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          source: ${{ env.PRJ }}.zip
+          target: ${{ env.HOME_DIR }}/tmp/deploy
+
+      - name: Activate release
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ vars.HOST }}
+          username: ${{ vars.USER }}
+          key: ${{ secrets.SSH_KEY }}
+
+          script: |
+            set -eu
+
+            PRJ="${{ env.PRJ }}"
+            HOME_DIR="${{ env.HOME_DIR }}"
+            SERVICE="${{ env.SERVICE }}"
+
+            if [ -z "$HOME_DIR" ]; then
+              echo "HOME_DIR is not configured."
+              exit 1
+            fi
+
+            if [ -z "$SERVICE" ]; then
+              echo "SERVICE is not configured."
+              exit 1
+            fi
+
+            APP_ROOT="$HOME_DIR/app/pde"
+            RELEASES="$APP_ROOT/releases"
+            CURRENT="$APP_ROOT/current"
+            DEPLOY_TMP="$HOME_DIR/tmp/deploy"
+
+            RELEASE_ID="${{ github.run_id }}-${{ github.run_attempt }}"
+            RELEASE="$RELEASES/$RELEASE_ID"
+            ARCHIVE="$DEPLOY_TMP/${PRJ}.zip"
+
+            mkdir -p "$RELEASES" "$DEPLOY_TMP"
+
+            if [ ! -f "$ARCHIVE" ]; then
+              echo "Deployment archive not found: $ARCHIVE"
+              exit 1
+            fi
+
+            if [ -e "$RELEASE" ]; then
+              echo "Release already exists: $RELEASE"
+              exit 1
+            fi
+
+            mkdir "$RELEASE"
+            unzip -qq "$ARCHIVE" -d "$RELEASE"
+            rm -f "$ARCHIVE"
+
+            if [ ! -f "$RELEASE/package.json" ]; then
+              echo "Invalid release: package.json not found."
+              rm -rf "$RELEASE"
+              exit 1
+            fi
+
+            PREVIOUS=""
+
+            if [ -L "$CURRENT" ]; then
+              PREVIOUS="$(readlink -f "$CURRENT")"
+
+            elif [ -d "$CURRENT" ]; then
+              if [ -n "$(find "$CURRENT" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+                echo "$CURRENT is a real non-empty directory."
+                echo "Refusing automatic migration to release symlink."
+                rm -rf "$RELEASE"
+                exit 1
+              fi
+
+              rmdir "$CURRENT"
+
+            elif [ -e "$CURRENT" ]; then
+              echo "$CURRENT exists but is neither a directory nor symlink."
+              rm -rf "$RELEASE"
+              exit 1
+            fi
+
+            sudo /bin/systemctl stop "$SERVICE" || true
+
+            rm -f "$APP_ROOT/current.next"
+            ln -s "$RELEASE" "$APP_ROOT/current.next"
+            mv -Tf "$APP_ROOT/current.next" "$CURRENT"
+
+            ENV_FILE="$(/bin/systemctl show "$SERVICE" --property=EnvironmentFiles --value | awk '{print $1}' | sed 's/^-//')"
+
+            if [ -z "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then
+              echo "Service EnvironmentFile not found."
+              exit 1
+            fi
+
+            set -a
+            . "$ENV_FILE"
+            set +a
+
+            if (cd "$CURRENT" && npm exec -- teq db:migrate) \
+              && sudo /bin/systemctl start "$SERVICE" \
+              && /bin/systemctl is-active --quiet "$SERVICE"; then
+
+              echo "Release activated: $RELEASE_ID"
+
+              ls -1dt "$RELEASES"/* 2>/dev/null \
+                  | tail -n +11 \
+                | xargs -r rm -rf
+
+              exit 0
+            fi
+
+            echo "New release failed."
+
+            sudo /bin/systemctl stop "$SERVICE" || true
+
+            if [ -n "$PREVIOUS" ] && [ -d "$PREVIOUS" ]; then
+              echo "Rolling back to: $PREVIOUS"
+
+              rm -f "$CURRENT"
+              ln -s "$PREVIOUS" "$CURRENT"
+
+              sudo /bin/systemctl start "$SERVICE"
+              /bin/systemctl is-active --quiet "$SERVICE"
+
+              echo "Rollback completed."
+            else
+              echo "No previous release available for rollback."
+            fi
+
+            exit 1

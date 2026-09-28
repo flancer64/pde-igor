@@ -1,0 +1,6 @@
+/**/.env
+/**/node_modules/
+/**/output*.md
+/**/output*.zip
+/**/tmp/
+/var/
