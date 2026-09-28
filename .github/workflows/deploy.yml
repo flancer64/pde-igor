@@ -189,10 +189,19 @@ jobs:
               exit 1
             fi
 
+            if [ ! -s "$CURRENT/.nvmrc" ]; then
+              echo "Release .nvmrc is missing."
+              exit 1
+            fi
+
+            echo "Selecting Node version $(cat "$CURRENT/.nvmrc")"
+
             if (cd "$CURRENT" \
               && export NVM_DIR \
               && . "$NVM_DIR/nvm.sh" \
-              && { nvm use --silent || nvm install; } \
+              && echo "NVM loaded" \
+              && { nvm use || nvm install; } \
+              && command -v npm \
               && npm exec -- teq db:migrate) \
               && sudo /bin/systemctl start "$SERVICE" \
               && /bin/systemctl is-active --quiet "$SERVICE"; then
