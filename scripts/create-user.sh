@@ -508,13 +508,6 @@ install_nvm() {
 
 install_systemd_service() {
     local temporary_file
-    if [ "$systemd_file_state" = legacy ]; then
-        ensure_file_properties "$SERVICE_FILE" root root 0644
-        if ! systemctl is-enabled "$SERVICE_NAME" >/dev/null 2>&1; then
-            systemctl enable "$SERVICE_NAME"
-        fi
-        return
-    fi
     temporary_file="$(mktemp --suffix=.service /tmp/pde-igor-unit.XXXXXX)"
     temporary_files+=("$temporary_file")
     if ! render_systemd_service > "$temporary_file"; then
@@ -541,10 +534,6 @@ install_systemd_service() {
 
 install_deployment_sudoers() {
     local temporary_file
-    if [ "$sudoers_file_state" = legacy ]; then
-        ensure_file_properties "$SUDOERS_FILE" root root 0440
-        return
-    fi
     temporary_file="$(mktemp /tmp/pde-igor-sudoers.XXXXXX)"
     temporary_files+=("$temporary_file")
     if ! render_sudoers_file > "$temporary_file"; then
@@ -562,10 +551,6 @@ install_deployment_sudoers() {
 
 install_logrotate() {
     local temporary_file
-    if [ "$logrotate_file_state" = legacy ]; then
-        ensure_file_properties "$LOGROTATE_FILE" root root 0644
-        return
-    fi
     temporary_file="$(mktemp /tmp/pde-igor-logrotate.XXXXXX)"
     temporary_files+=("$temporary_file")
     if ! render_logrotate_file > "$temporary_file"; then
@@ -610,15 +595,29 @@ render_http_vhost() {
     render_http_vhost_body
 }
 
-render_proxy_config() {
+render_proxy_config_body() {
+    local proxy_port="$1"
     cat <<EOF
-${MANAGED_MARKER}
 ErrorLog \${APACHE_LOG_DIR}/${APP_USER}-ssl.error.log
 CustomLog \${APACHE_LOG_DIR}/${APP_USER}-ssl.access.log combined
 Protocols h2 http/1.1
 RewriteEngine on
-RewriteRule "^/(.*)$" "h2c://127.0.0.1:${port}/\$1" [P]
+RewriteRule "^/(.*)$" "h2c://127.0.0.1:${proxy_port}/\$1" [P]
 EOF
+}
+
+render_proxy_config() {
+    printf '%s\n' "$MANAGED_MARKER"
+    render_proxy_config_body "$port"
+}
+
+render_legacy_proxy_config() {
+    local previous_port
+    [ "$app_env_exists" = true ] || return 1
+    previous_port="$(read_env_value TEQFW_WEB__PORT)" || return 1
+    [[ "$previous_port" =~ ^[0-9]{1,5}$ ]] || return 1
+    ((10#$previous_port >= 1024 && 10#$previous_port <= 65535)) || return 1
+    render_proxy_config_body "$((10#$previous_port))"
 }
 
 read_app_environment() {
@@ -897,7 +896,7 @@ inspect_apache_state() {
             existing_install=true
         fi
     fi
-    proxy_config_state="$(classify_managed_file "$PROXY_CONFIG_FILE" '' 'PDE Apache proxy configuration')"
+    proxy_config_state="$(classify_managed_file "$PROXY_CONFIG_FILE" render_legacy_proxy_config 'PDE Apache proxy configuration')"
     [ "$proxy_config_state" != managed ] || existing_install=true
 
     inspect_certbot_configuration
@@ -1063,8 +1062,7 @@ EOF
 
 install_http_vhost() {
     local temporary_file
-    if [ "$http_vhost_state" = legacy ] \
-        && { [ "$certificate_valid" != true ] || grep -Fqx "    RewriteRule ^ https://%{SERVER_NAME}%{REQUEST_URI} [END,NE,R=permanent]" "$HTTP_VHOST_FILE"; }; then
+    if [ "$http_vhost_state" = legacy ] && [ "$certificate_valid" != true ]; then
         ensure_file_properties "$HTTP_VHOST_FILE" root root 0644
         return
     fi
@@ -1263,6 +1261,7 @@ install_apache_and_certbot() {
     [ "${#ssl_vhosts[@]}" -eq 1 ] || fail "Certbot did not create a single *-le-ssl.conf site for ${domain}."
     ssl_vhost="${ssl_vhosts[0]}"
 
+    install_http_vhost
     ensure_site_enabled "$(basename "$ssl_vhost")" "$ssl_vhost"
     install_proxy_include "$ssl_vhost"
     apache2ctl configtest
