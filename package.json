@@ -38,7 +38,8 @@
   },
   "scripts": {
     "db:migrate": "teq db:migrate",
-    "start": "teq web:start"
+    "start": "teq web:start",
+    "test": "node --test"
   },
   "dependencies": {
     "@flancer32/pde-desk-echo": "github:flancer32/pde-desk-echo#main",

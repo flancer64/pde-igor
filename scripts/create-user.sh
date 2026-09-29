@@ -124,16 +124,19 @@ prepare_account() {
 }
 
 prepare_database() {
-    local role database password owner_secret role_comment public_access
+    local role database password person_secret role_comment public_access
     role=$(sudo -u postgres psql -XAtqc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'")
     database=$(sudo -u postgres psql -XAtqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='$DB_NAME'")
     if exists "$ENV_FILE"; then
         [ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || fail "Invalid private configuration: $ENV_FILE"
         [ "$(stat -c %U:%G "$ENV_FILE")" = "$APP_USER:$APP_USER" ] || fail "Unexpected app.env owner."
         [ "$(stat -c %a "$ENV_FILE")" = 600 ] || chmod 0600 "$ENV_FILE"
-        for key in PDE_RUNTIME__OWNER_SECRET TEQFW_DB__PASSWORD TEQFW_DB__DATABASE TEQFW_DB__USER; do
+        for key in TEQFW_DB__PASSWORD TEQFW_DB__DATABASE TEQFW_DB__USER; do
             [ -n "$(env_value "$key")" ] || fail "Missing or duplicate $key in $ENV_FILE"
         done
+        person_secret=$(env_value PDE_RUNTIME__PERSON_SECRET || true)
+        if [ -z "$person_secret" ]; then person_secret=$(env_value PDE_RUNTIME__OWNER_SECRET || true); fi
+        [ "${#person_secret}" -ge 32 ] || fail "Missing or short Person secret in $ENV_FILE"
         [ "$(env_value TEQFW_DB__DATABASE)" = "$DB_NAME" ] || fail 'Unexpected database in app.env.'
         [ "$(env_value TEQFW_DB__USER)" = "$DB_USER" ] || fail 'Unexpected database user in app.env.'
         [ "$(env_value TEQFW_DB__HOST)" = 127.0.0.1 ] || fail 'Unexpected database host in app.env.'
@@ -150,7 +153,7 @@ prepare_database() {
             fail 'PostgreSQL database exists without its role or app.env.'
         fi
         password=$(openssl rand -base64 48 | tr -d '\n')
-        owner_secret=$(openssl rand -base64 48 | tr -d '\n')
+        person_secret=$(openssl rand -base64 48 | tr -d '\n')
     fi
     [ -z "$database" ] || [ "$database" = "$DB_USER" ] || fail "Database $DB_NAME is owned by $database."
     if [ "$role" != 1 ]; then
@@ -189,7 +192,7 @@ PDE_RUNTIME__AUTHORIZATION_CODE_TTL_SECONDS=120
 PDE_RUNTIME__AUTHORIZATION_REQUEST_TTL_SECONDS=300
 PDE_RUNTIME__BASE_URL=$BASE_URL
 PDE_RUNTIME__COOKIE_SECURE=true
-PDE_RUNTIME__OWNER_SECRET=$owner_secret
+PDE_RUNTIME__PERSON_SECRET=$person_secret
 PDE_RUNTIME__OWNER_SESSION_TTL_SECONDS=3600
 
 TEQFW_DB__CLIENT=pg

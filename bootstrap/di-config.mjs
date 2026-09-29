@@ -11,11 +11,8 @@ export default class Configurator {
      * @returns {TeqFw_Cli_Api_Container_Configurator_Configuration}
      */
     configure({argv}) {
-        const preprocessors = [];
-        if (argv.includes('db:migrate')) preprocessors.push(function (dependency) {
-            if (dependency.moduleName !== 'Pde_Runtime_Cli_Command_DbMigrate') return dependency;
-            return Object.freeze({...dependency, moduleName: 'Pde_Igor_Cli_Command_LegacyRuntimeMigration'});
-        });
-        return {preprocessors};
+        return {container: {
+            preprocessors: argv.includes('db:migrate') ? ['Pde_Igor_Cli_MigrationPreprocessor$'] : [],
+        }};
     }
 }

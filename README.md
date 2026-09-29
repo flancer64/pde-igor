@@ -15,12 +15,17 @@ npm run db:migrate
 npm start
 ```
 
-Before starting the application, set `PDE_RUNTIME__OWNER_SECRET` and PostgreSQL
+Before starting the application, set `PDE_RUNTIME__PERSON_SECRET` and PostgreSQL
 connection values in `.env`. For Telegram Desk, additionally set
 `PDE_DESK_TELEGRAM__API_ID` and `PDE_DESK_TELEGRAM__API_HASH`.
+Existing deployments can continue using `PDE_RUNTIME__OWNER_SECRET` as the
+Runtime's deprecated fallback until their credentials are deliberately rotated.
 
-`npm run db:migrate` initializes the clean database schema before the first
-application start.
+`npm run db:migrate` initializes a clean database or migrates a recognized
+Runtime predecessor before application start. Back up an existing database
+before running it. The migration recognizes the production `trusted_*` schema,
+rebuilds the current `delegate_*` schema, verifies row counts, and records the
+applied schema in TeqFW history.
 
 ## Verification
 
